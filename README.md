@@ -1,16 +1,12 @@
-## memorymodels
+## entropyestimators
 
 ### Overview
 
-Code for work on text compression and memory augmentation via masked mixer autoencoders.
+Code for the paper 'Know Your Limits: Entropy Estimation Modeling for Compression and Generalization', found here: https://arxiv.org/abs/2511.10618
 
 ### Quickstart
 
-To run this code using a GPU-accelerated node, spin up a venv, install dependencies via `uv pip install requirements.txt`, run the driver code in the `entropyestimators` directory. Note that the requirements expect a CUDA device capability of at least 7.0, Python >=3.10, CUDA runtime major version of 12 and driver of at least 535.xxx.xx
-
-If you are developing locally, install the `local_reqs.txt` and run any tests you wish (for example `memorymodels/causal_test_bed.py` to check for causality).
-
-Driver code typically uses the `transformers.trainer` utility which is handy for its compatibility with distributed training algorithms for saving model checkpoints, scheduling lrs, etc and is really just a sophisticated PyTorch wrapper. Note that the `trainer` does have a few long-standing bugs such that one occasionally needs to write a custom evaluation script or schedule, which is usually most straightforward to achieve via injecting a function rather than subclassing or making a branch and rewriting the library.
+To run code using a GPU-accelerated node, spin up a venv, install dependencies via `uv pip install requirements.txt`, run the driver code in the `entropyestimators` directory. Note that the requirements expect a CUDA device capability of at least 7.0, Python >=3.10, CUDA runtime major version of 12 and driver of at least 535.xxx.xx
 
 All driver code is compatible with using a GPU-accelerated server either via Distributed Data Parallel as follows,
 
@@ -30,28 +26,8 @@ or Deepspeed ZeRO stage 3
 $ accelerate launch --config_file "configs/zero_config.yaml" {training_script.py}
 ```
 
-Note that these configs do not auto-detect compute capabilities and GPU numbers, so switching between 2 and 4 and 8 GPUs may require changing the `num_processes` variable in the corresponding YAML. Currently all drivers and configs are set to use fp16/fp32 mixed precision training for reproducability with V100s, but for experiments run only on A100s/H100s bf16 can be used instead.
+### Format
 
-With any of the above methods for distributed launch, you may experience an error if another job is already running due to a port being in use. If this is the cae, simply change the `master_port` to a new value (`torch` defaults to 35600), for example see the following:
+Most code is divided into files containing model architectures (e.g. `entropyestimators/mixer_clm.py`) and files specifying model dimensions, datasets, and optimizations (e.g. `mixer_trainer_fineweb.py`). Datasets are typically pre-tokenized with a tokenizer trained for a particular domain in question.
 
-```bash
-$ CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node=2 --master_port 35500 {training_script.py}
-```
-
-### Precomputation
-
-The drivers are designed to collate and batch pretokenized (and pre-padded) inputs as an alterative to loading cached datasets, tokenizing, batching and collating. This design choice trades disk space for training speed: older CPUs (the V100s cluster has Intel E5 v4s) typically do throttle training slightly when using large batches if tokenization is performed during training, even though tokenization occurs during forward passes to attempt to avoid blocking by default. 
-
-This means that if a new dataset is introduced, you must tokenize it first via `fineweb_packed_tokenizer.py` before loading the safetensors file containing the tokenized data. In that file, note that `packed` switches from a default of truncating all dataset documents that are too long and padding all that are too short to instead linearize the documents, tokenize all input data, chunk while avoid padding unless necessary, and reshape and save the chunks. 
-
-If you want to train a tokenizer on a corpus, use `fineweb_tokenizer_trainer.py`. 
-
-### Experimental Records
-
-This project is currently focused on training efficiency with respect to compression achieved (or equivalently NLL loss or CEL) per compute amount applied, and so right now the primary experimental results are training runs. Trainers will save model, optimizer, losses, and some hyperparameter states which can be plotted. The driver code in the target checkpoint directory, but it is preferred to use an unambiguous name for this folder that describes all relevant detais of each experiment to avoid making results too difficult to find.
-
-In the future functional benchmarks will likely be used to supplement the compression data.
-
-### TODOs
-- [x] Refactor driver code to keep model implementations separate from trainers and initializers
-- [x] Refactor hardcoded paths into envs, one for each server node
+If you want to train a tokenizer on a corpus, use `fineweb_tokenizer_trainer.py` and subsitute your corpus as necessary.
