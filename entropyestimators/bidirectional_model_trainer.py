@@ -56,7 +56,7 @@ tokenizer = AutoTokenizer.from_pretrained("/home/bbadger/Desktop/tokenizer_finew
 tokenizer.pad_token = tokenizer.eos_token
 n_vocab = len(tokenizer)
 
-tokenized_length = 512
+tokenized_length = 1024
 dim = 512
 n_hidden_layers = 8 # half of the CLM equivalent
 			
@@ -83,6 +83,7 @@ test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
 
+global_batch_size = 64
 # get number of devices (assumes that all visible devices are used for training)
 if torch.cuda.is_available():
 	n_devices = torch.cuda.device_count()
