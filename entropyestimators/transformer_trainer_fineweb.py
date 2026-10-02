@@ -20,6 +20,24 @@ from dotenv import load_dotenv
 from transformer_autoencoder import AbbreviatedModel, AutoencodingTransformer, AutoencodingTransformerMod, UnrolledAutoencodingTransformer
 from memory_transformer import VariableMemoryTransformer, MemoryTransformer, RecurrentMemoryTransformer, ProjMemoryTransformer
 
+class FlexLossWrapper(nn.Module):
+
+	def __init__(self, model, last_loss_only=False):
+		super().__init__()
+		self.model = model # expects a causal model here
+		self.cel = nn.CrossEntropyLoss()
+		self.unreduced_cel = nn.CrossEntropyLoss(reduction='none')
+		self.last_loss_only = last_loss_only
+
+	def forward(self, input_ids, labels=None, attention_mask=None):
+		x = input_ids.to(device)
+		logits, reduced_loss = model(x, attention_mask=attention_mask)
+		if self.last_loss_only:
+			loss = self.unreduced_cel(logits, labels)[:, -1] # last token loss from all batch elements
+		else:
+			loss = self.cel(logits, labels)
+		return loss, output
+
 warnings.filterwarnings(action='ignore')
 
 load_dotenv()
@@ -48,7 +66,7 @@ print (llama_config_kwargs)
 configuration = LlamaConfig(**llama_config_kwargs)
 
 # Initializing a model from the llama-7b style configuration
-model = LlamaForCausalLM(configuration).float()
+model = LlamaForCausalLM(configuration)
 
 # transformer autoencoder (custom blocks)
 # encoder_model = AbbreviatedModel(LlamaForCausalLM(configuration), tokenized_length=context_length)
@@ -93,7 +111,6 @@ print (model)
 train_path = f"{data_root}/fineweb-edu-tokenized-train-c1024-lpad-8k"
 test_path = f"{data_root}/fineweb-edu-tokenized-test-c1024-lpad-8k"
 
-datasets.config.IN_MEMORY_MAX_SIZE = 35e9
 train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
 
@@ -149,3 +166,10 @@ print (f"training begun: saving results in {output_dir}")
 model.train()
 trainer.train()
 #trainer.train(output_dir + '/checkpoint-8000')
+
+# evaluate last token prediction accuracy
+print ('evaluating last token loss only')
+model = FlexLossWrapper(model, last_loss_only=True)
+model.eval()
+trainer.evaluate()
+

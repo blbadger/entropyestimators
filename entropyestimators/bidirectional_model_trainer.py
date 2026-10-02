@@ -10,15 +10,17 @@ from dotenv import load_dotenv
 
 class BidirectionalTransformer(nn.Module):
 
-	def __init__(self, n_vocab, dim, forward_model, reverse_model):
+	def __init__(self, n_vocab, dim, forward_model, reverse_model, last_loss_only=False):
 		super().__init__()
 		self.wte = nn.Embedding(n_vocab, dim)
-
 		self.lm_head = nn.Linear(dim, n_vocab, bias=False)
 		self.cel = nn.CrossEntropyLoss()
+		self.unreduced_cel = nn.CrossEntropyLoss(reduction='none')
+		self.last_loss_only = last_loss_only
 		self.tokenized_length = tokenized_length
 		self.forward_model = forward_model
 		self.reverse_model = reverse_model
+		
 
 	def forward(self, input_ids, labels=None, attention_mask=None):
 		x = input_ids.to(device)
@@ -39,14 +41,16 @@ class BidirectionalTransformer(nn.Module):
 		logits = rearrange(output, 'b t e -> b e t')
 		if labels.dim() > 2:
 			labels = rearrange(labels, 'b p t -> b (p t)')
-		loss = self.cel(logits, labels)
+		if self.last_loss_only:
+			loss = self.unreduced_cel(logits, labels)[:, -1] # last token loss from all batch elements
+		else:
+			loss = self.cel(logits, labels)
 		return loss, output
 
 
 load_dotenv()
 checkpoint_root = os.getenv('CHECKPOINT_ROOT')
 data_root = os.getenv('DATA_ROOT')
-
 
 tokenizer = AutoTokenizer.from_pretrained("/home/bbadger/Desktop/tokenizer_fineweb_8k")
 tokenizer.pad_token = tokenizer.eos_token
@@ -128,3 +132,9 @@ shutil.copy(code_path, output_dir)
 
 model.train()
 trainer.train()
+
+# evaluate last token prediction accuracy
+print ('evaluating last token loss only')
+model.last_loss_only = True
+model.eval()
+trainer.evaluate()
