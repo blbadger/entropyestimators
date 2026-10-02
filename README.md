@@ -6,7 +6,7 @@ Code for the paper 'Know Your Limits: Entropy Estimation Modeling for Compressio
 
 ### Quickstart
 
-To run code using a GPU-accelerated node, spin up a venv, install dependencies via `uv pip install requirements.txt`, run the driver code in the `entropyestimators` directory. Note that the requirements expect a CUDA device capability of at least 7.0, Python >=3.10, CUDA runtime major version of 12 and driver of at least 535.xxx.xx
+To run code using a GPU-accelerated node, note that the requirements expect a CUDA device capability of at least 7.0, Python >=3.10, CUDA runtime major version of 12 and driver of at least 535.xxx.xx
 
 All driver code is compatible with using a GPU-accelerated server either via Distributed Data Parallel as follows,
 
