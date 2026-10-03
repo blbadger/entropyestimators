@@ -1,10 +1,12 @@
 import torch
 from einops import rearrange
 import transformers
+import shutil
+import os
 import torch.nn as nn
 from transformers import AutoTokenizer
 from datasets import load_dataset, load_from_disk
-from transformers import LlamaConfig, LlamaForCausalLM
+from transformers import LlamaConfig, LlamaModel, LlamaForCausalLM
 from prettytable import PrettyTable
 from dotenv import load_dotenv
 
@@ -23,16 +25,16 @@ class BidirectionalTransformer(nn.Module):
 		
 
 	def forward(self, input_ids, labels=None, attention_mask=None):
-		x = input_ids.to(device)
+		x = input_ids
 		x = self.wte(x) # unified token embedding 
 		y = torch.flip(x.clone(), dims=[1]) # reversed in token dim
 		y_attn_mask = None
-		if attention_mask:
+		if attention_mask is not None:
 			y_attn_mask = torch.flip(attention_mask.clone(), dims=[1])
 		
-		forward = self.forward_model(inputs_embeds=x, attention_mask=attention_mask)
-		reverse = self.reverse_model(inputs_embeds=y, attention_mask=y_attn_mask)
-		pad = torch.zeros(x.shape[0], 1, x.shape[2]).to(device)
+		forward = self.forward_model(inputs_embeds=x, attention_mask=attention_mask).last_hidden_state
+		reverse = self.reverse_model(inputs_embeds=y, attention_mask=y_attn_mask).last_hidden_state
+		pad = torch.zeros(x.shape[0], 1, x.shape[2]).to(input_ids.device)
 
 		reverse = torch.cat([torch.flip(reverse, dims=[1])[..., 1:, :], pad], dim=1) # right pad reverse
 		forward = torch.cat([pad, forward[..., :-1, :]], dim=1) # left pad forward
@@ -58,12 +60,12 @@ n_vocab = len(tokenizer)
 
 tokenized_length = 1024
 dim = 512
-n_hidden_layers = 8 # half of the CLM equivalent
+n_hidden_layers = 16 # half of the CLM equivalent
 			
 llama_config_kwargs = {
 	'hidden_size': dim,
 	'intermediate_size': 4*dim,
-	'num_hidden_layers': n_hidden_layers
+	'num_hidden_layers': n_hidden_layers,
 	'num_attention_heads': 4,
 	'vocab_size': 4096
 }
@@ -92,8 +94,8 @@ batch_size = global_batch_size // n_devices
 # descriptive name for output
 output_dir = f'{checkpoint_root}/fineweb_bidirectional\
 _d{dim}\
-_n{n_layers}\
-_c{context_length}_b{batch_size}x{n_devices}'
+_n{n_hidden_layers}\
+_c{tokenized_length}_b{batch_size}x{n_devices}'
 
 print (f"training model, saving to {output_dir}")
 
