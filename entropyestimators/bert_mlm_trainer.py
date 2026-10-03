@@ -4,7 +4,7 @@ import transformers
 import torch.nn as nn
 from transformers import AutoTokenizer
 from datasets import load_dataset, load_from_disk
-from transformers import BertConfig, BertForMaskedLM
+from transformers import BertConfig, BertForMaskedLM, ModernBertConfig, ModernBertForMaskedLM
 from prettytable import PrettyTable
 import shutil
 from dotenv import load_dotenv
@@ -17,7 +17,7 @@ data_root = os.getenv('DATA_ROOT')
 
 tokenizer = AutoTokenizer.from_pretrained("/home/bbadger/Desktop/tokenizer_fineweb_8k")
 tokenizer.pad_token = tokenizer.eos_token
-tokenizer.mask_token_id = len(tokenizer) - 2
+tokenizer.mask_token_id = len(tokenizer) - 1
 n_vocab = len(tokenizer)
 
 tokenized_length = 512
@@ -32,10 +32,12 @@ bert_config_kwargs = {
 	'vocab_size': len(tokenizer)
 }
 
-# Initializing a Bert
+# Initializing a Bert model
 configuration = BertConfig(**bert_config_kwargs)
-
 model = BertForMaskedLM(configuration)
+
+configuration = ModernBertConfig(**bert_config_kwargs)
+model = ModernBertForMaskedLM(configuration)
 
 train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
 test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
@@ -78,12 +80,14 @@ training_arguments = transformers.TrainingArguments(
 	report_to='none'
 )
 
+mlm_probs = 0.15 if isinstance(model, BertForMaskedLM) else 0.3
+
 trainer = transformers.Trainer(
 	model=model,
 	train_dataset=train_dataset,
 	eval_dataset=test_dataset,
 	args=training_arguments,
-	data_collator=transformers.DataCollatorForLanguageModeling(tokenizer, mlm=True, mlm_probability=0.15),
+	data_collator=transformers.DataCollatorForLanguageModeling(tokenizer, mlm=True, mlm_probability=mlm_probs),
 )
 
 # save driver code snapshot in checkpoint dir

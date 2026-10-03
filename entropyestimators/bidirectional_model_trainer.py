@@ -10,6 +10,33 @@ from transformers import LlamaConfig, LlamaModel, LlamaForCausalLM
 from prettytable import PrettyTable
 from dotenv import load_dotenv
 
+
+class ReverseTransformer(nn.Module):
+
+	def __init__(self, n_vocab, dim, model):
+		super().__init__()
+		self.wte = nn.Embedding(n_vocab, dim)
+		self.lm_head = nn.Linear(dim, n_vocab)
+		self.cel = nn.CrossEntropyLoss()
+		self.model = model # a clm
+
+	def forward(self, input_ids, labels=None, attention_mask=None):
+		reversed_ids = torch.flip(input_ids.clone(), dims=[1])
+		if attention_mask is not None:
+			attn_mask = torch.flip(attention_mask.clone(), dims=[1])
+		if labels is not None:
+			labels = torch.flip(labels, dims=[1])
+		model_output = self.model(input_ids=reversed_ids, attention_mask=attn_mask).logits
+		logits = rearrange(logits, 'b t e -> b e t')
+
+		if labels is not None:
+			shift_logits = logits[..., :-1]
+			shift_labels = labels[..., 1:]
+			loss = self.cel(shift_logits, shift_labels)
+		else:
+			loss = 0
+		return loss, logits
+
 class BidirectionalTransformer(nn.Module):
 
 	def __init__(self, n_vocab, dim, forward_model, reverse_model, last_loss_only=False):
@@ -49,6 +76,42 @@ class BidirectionalTransformer(nn.Module):
 			loss = self.cel(logits, labels)
 		return loss, output
 
+class OutsideInTransformer(nn.Module):
+
+	def __init__(self, n_vocab, dim, forward_model, reverse_model):
+		super().__init__()
+		self.wte = nn.Embedding(n_vocab, dim)
+		self.lm_head_f = nn.Linear(dim, n_vocab, bias=False)
+		self.lm_head_r = nn.Linear(dim, n_vocab, bias=False)
+		self.cel = nn.CrossEntropyLoss()
+		self.unreduced_cel = nn.CrossEntropyLoss(reduction='none')
+		self.tokenized_length = tokenized_length
+		self.forward_model = forward_model
+		self.reverse_model = reverse_model
+		
+
+	def forward(self, input_ids, labels=None, attention_mask=None):
+		x = input_ids
+		x = self.wte(x) # unified token embedding 
+		y = torch.flip(x.clone(), dims=[1]) # reversed in token dim
+		y_attn_mask = None
+		if attention_mask is not None:
+			y_attn_mask = torch.flip(attention_mask.clone(), dims=[1])
+		
+		# separate f/r modules not necessary as t_n+1 not in f_n or r_-n
+		forward = self.forward_model(inputs_embeds=x+y, attention_mask=attention_mask).last_hidden_state
+		reverse = self.reverse_model(inputs_embeds=x+y, attention_mask=y_attn_mask).last_hidden_state
+
+		forward_output = self.lm_head_f(forward)
+		reverse_output = self.lm_head_r(reverse)
+		forward_logits = rearrange(forward_output, 'b t e -> b e t')
+		reverse_logits = rearrange(reverse_output, 'b t e -> b e t')
+		if labels.dim() > 2:
+			labels = rearrange(labels, 'b p t -> b (p t)')
+		if self.last_loss_only:
+			loss_f = self.unreduced_cel(forward_logits, labels)[:, :input_ids.shape[1]//2] # first half of tokens are by head on forward modules
+			loss_r = self.unreduced_cel(revers_logits, labels)[:, input_ids.shape[1]//2:] # second half are predicted by head on reverse modules
+		return loss, output
 
 load_dotenv()
 checkpoint_root = os.getenv('CHECKPOINT_ROOT')
@@ -60,7 +123,7 @@ n_vocab = len(tokenizer)
 
 tokenized_length = 1024
 dim = 512
-n_hidden_layers = 16 # half of the CLM equivalent
+n_hidden_layers = 8 # half of the CLM equivalent
 			
 llama_config_kwargs = {
 	'hidden_size': dim,
@@ -85,7 +148,7 @@ test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
 
-global_batch_size = 64
+global_batch_size = 128
 # get number of devices (assumes that all visible devices are used for training)
 if torch.cuda.is_available():
 	n_devices = torch.cuda.device_count()
