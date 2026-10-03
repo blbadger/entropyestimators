@@ -4,10 +4,12 @@ import transformers
 import torch.nn as nn
 from transformers import AutoTokenizer
 from datasets import load_dataset, load_from_disk
-from transformers import BertConfig, BertModel
+from transformers import BertConfig, BertForMaskedLM
 from prettytable import PrettyTable
+import shutil
 from dotenv import load_dotenv
-
+import os
+import pathlib
 
 load_dotenv()
 checkpoint_root = os.getenv('CHECKPOINT_ROOT')
@@ -15,6 +17,7 @@ data_root = os.getenv('DATA_ROOT')
 
 tokenizer = AutoTokenizer.from_pretrained("/home/bbadger/Desktop/tokenizer_fineweb_8k")
 tokenizer.pad_token = tokenizer.eos_token
+tokenizer.mask_token_id = len(tokenizer) - 2
 n_vocab = len(tokenizer)
 
 tokenized_length = 512
@@ -24,9 +27,9 @@ n_hidden_layers = 16
 bert_config_kwargs = {
 	'hidden_size': dim,
 	'intermediate_size': 4*dim,
-	'num_hidden_layers': n_hidden_layers
+	'num_hidden_layers': n_hidden_layers,
 	'num_attention_heads': 4,
-	'vocab_size': 4096
+	'vocab_size': len(tokenizer)
 }
 
 # Initializing a Bert
@@ -42,15 +45,16 @@ train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
 
 # get number of devices (assumes that all visible devices are used for training)
+global_batch_size=128
 if torch.cuda.is_available():
 	n_devices = torch.cuda.device_count()
 batch_size = global_batch_size // n_devices
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_bidirectional\
+output_dir = f'{checkpoint_root}/fineweb_bert_0.15mlm\
 _d{dim}\
-_n{n_layers}\
-_c{context_length}_b{batch_size}x{n_devices}'
+_n{n_hidden_layers}\
+_c{tokenized_length}_b{batch_size}x{n_devices}'
 
 print (f"training model, saving to {output_dir}")
 
@@ -70,7 +74,7 @@ training_arguments = transformers.TrainingArguments(
 	max_steps=200000,
 	save_strategy='steps',
 	save_steps=10000,
-	torch_compile=True,
+	torch_compile=False,
 	report_to='none'
 )
 
