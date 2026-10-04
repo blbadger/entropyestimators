@@ -104,13 +104,18 @@ class OutsideInTransformer(nn.Module):
 
 		forward_output = self.lm_head_f(forward)
 		reverse_output = self.lm_head_r(reverse)
+		output = torch.cat((forward_output, reverse_output), dim=1) # concat in token dim
 		forward_logits = rearrange(forward_output, 'b t e -> b e t')
 		reverse_logits = rearrange(reverse_output, 'b t e -> b e t')
-		if labels.dim() > 2:
-			labels = rearrange(labels, 'b p t -> b (p t)')
-		if self.last_loss_only:
-			loss_f = self.unreduced_cel(forward_logits, labels)[:, :input_ids.shape[1]//2] # first half of tokens are by head on forward modules
-			loss_r = self.unreduced_cel(revers_logits, labels)[:, input_ids.shape[1]//2:] # second half are predicted by head on reverse modules
+		if labels is not None:
+			if labels.dim() > 2:
+				labels = rearrange(labels, 'b p t -> b (p t)')
+			half_length = input_ids.shape[1] // 2
+			loss_f = self.cel(forward_logits[..., :half_length] , labels[:, :half_length])# first half of tokens are by head on forward modules
+			loss_r = self.cel(reverse_logits[..., half_length:], labels[:, half_length:]) # second half are predicted by head on reverse modules
+			loss = torch.sum(loss_f + loss_r)/2
+		else:
+			loss = 0
 		return loss, output
 
 load_dotenv()
@@ -123,7 +128,7 @@ n_vocab = len(tokenizer)
 
 tokenized_length = 512
 dim = 512
-n_hidden_layers = 16 # half of the CLM equivalent
+n_hidden_layers = 8 # half of the CLM equivalent
 			
 llama_config_kwargs = {
 	'hidden_size': dim,
@@ -141,8 +146,15 @@ configuration = LlamaConfig(**llama_config_kwargs)
 # reverse_model = LlamaModel(configuration)
 # model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model)
 
-model = LlamaForCausalLM(configuration)
-model = ReverseTransformer(model)
+# Initialize an outside-in model
+forward_model = LlamaModel(configuration)
+reverse_model = LlamaModel(configuration)
+model = OutsideInTransformer(n_vocab, dim, forward_model, reverse_model)
+
+# Initialize a reverse model tainer
+# model = LlamaForCausalLM(configuration)
+# model = ReverseTransformer(model)
+
 
 train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
 test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
@@ -158,7 +170,7 @@ if torch.cuda.is_available():
 batch_size = global_batch_size // n_devices
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_reverse\
+output_dir = f'{checkpoint_root}/fineweb_outside_in\
 _d{dim}\
 _n{n_hidden_layers}\
 _c{tokenized_length}_b{batch_size}x{n_devices}'
@@ -196,14 +208,14 @@ trainer = transformers.Trainer(
 # save driver code snapshot in checkpoint dir
 code_path = os.path.abspath(__file__)
 if not os.path.isdir(output_dir):
-    os.mkdir(output_dir)
+	os.mkdir(output_dir)
 shutil.copy(code_path, output_dir)
 
 model.train()
 trainer.train()
 
-# evaluate last token prediction accuracy
-print ('evaluating last token loss only')
-model.last_loss_only = True
-model.eval()
-trainer.evaluate()
+# # evaluate last token prediction accuracy
+# print ('evaluating last token loss only')
+# model.last_loss_only = True
+# model.eval()
+# trainer.evaluate()
