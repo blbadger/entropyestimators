@@ -6,24 +6,24 @@ Code for the paper 'Know Your Limits: Entropy Estimation Modeling for Compressio
 
 ### Quickstart
 
-To run code using a GPU-accelerated node, note that the requirements expect a CUDA device capability of at least 7.0, Python >=3.10, CUDA runtime major version of 12 and driver of at least 535.xxx.xx
+To run code using a GPU-accelerated node, add a .env file with the appropriate variables for `CHECKPOINT_ROOT` and `DATA_ROOT` and install uv if you have not already done so. Note that the requirements expect a CUDA device capability of at least 7.0, Python >=3.10, CUDA runtime major version of 12 and driver of at least 535.xxx.xx
 
 All driver code is compatible with using a GPU-accelerated server either via Distributed Data Parallel as follows,
 
 ```bash
-$ torchrun --nproc_per_node {n_gpus} {training_script.py}
+$ uv run torchrun --nproc_per_node {n_gpus} {training_script.py}
 ```
 
 or Fully Sharded Data Parallel,
 
 ```bash
-$ accelerate launch --config_file "configs/fsdp_config.yaml" {training_script.py}
+$ uv run accelerate launch --config_file "configs/fsdp_config.yaml" {training_script.py}
 ```
 
 or Deepspeed ZeRO stage 3
 
 ```bash
-$ accelerate launch --config_file "configs/zero_config.yaml" {training_script.py}
+$ uv run accelerate launch --config_file "configs/zero_config.yaml" {training_script.py}
 ```
 
 ### Format

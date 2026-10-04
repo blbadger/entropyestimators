@@ -111,8 +111,9 @@ class OutsideInTransformer(nn.Module):
 			if labels.dim() > 2:
 				labels = rearrange(labels, 'b p t -> b (p t)')
 			half_length = input_ids.shape[1] // 2
-			loss_f = self.cel(forward_logits[..., :half_length] , labels[:, :half_length])# first half of tokens are by head on forward modules
-			loss_r = self.cel(reverse_logits[..., half_length:], labels[:, half_length:]) # second half are predicted by head on reverse modules
+			# shift logits and compute loss
+			loss_f = self.cel(forward_logits[..., :half_length-1] , labels[:, 1:half_length]) # first half of tokens are by head on forward modules
+			loss_r = self.cel(reverse_logits[..., half_length:-1], labels[:, half_length+1:]) # second half are predicted by head on reverse modules
 			loss = torch.sum(loss_f + loss_r)/2
 		else:
 			loss = 0
@@ -154,7 +155,6 @@ model = OutsideInTransformer(n_vocab, dim, forward_model, reverse_model)
 # Initialize a reverse model tainer
 # model = LlamaForCausalLM(configuration)
 # model = ReverseTransformer(model)
-
 
 train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
 test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
