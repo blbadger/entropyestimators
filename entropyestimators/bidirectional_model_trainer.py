@@ -13,20 +13,20 @@ from dotenv import load_dotenv
 
 class ReverseTransformer(nn.Module):
 
-	def __init__(self, n_vocab, dim, model):
+	def __init__(self, model):
 		super().__init__()
-		self.wte = nn.Embedding(n_vocab, dim)
-		self.lm_head = nn.Linear(dim, n_vocab)
 		self.cel = nn.CrossEntropyLoss()
 		self.model = model # a clm
 
 	def forward(self, input_ids, labels=None, attention_mask=None):
-		reversed_ids = torch.flip(input_ids.clone(), dims=[1])
+		reversed_ids = torch.flip(input_ids, dims=[1])
+
 		if attention_mask is not None:
 			attn_mask = torch.flip(attention_mask.clone(), dims=[1])
 		if labels is not None:
 			labels = torch.flip(labels, dims=[1])
-		model_output = self.model(input_ids=reversed_ids, attention_mask=attn_mask).logits
+
+		logits = self.model(input_ids=reversed_ids, attention_mask=attn_mask).logits
 		logits = rearrange(logits, 'b t e -> b e t')
 
 		if labels is not None:
@@ -47,8 +47,8 @@ class BidirectionalTransformer(nn.Module):
 		self.unreduced_cel = nn.CrossEntropyLoss(reduction='none')
 		self.last_loss_only = last_loss_only
 		self.tokenized_length = tokenized_length
-		self.forward_model = forward_model
-		self.reverse_model = reverse_model
+		self.forward_model = forward_model # LlamaModel
+		self.reverse_model = reverse_model # LlamaModel
 		
 
 	def forward(self, input_ids, labels=None, attention_mask=None):
@@ -121,25 +121,28 @@ tokenizer = AutoTokenizer.from_pretrained("/home/bbadger/Desktop/tokenizer_finew
 tokenizer.pad_token = tokenizer.eos_token
 n_vocab = len(tokenizer)
 
-tokenized_length = 1024
+tokenized_length = 512
 dim = 512
-n_hidden_layers = 8 # half of the CLM equivalent
+n_hidden_layers = 16 # half of the CLM equivalent
 			
 llama_config_kwargs = {
 	'hidden_size': dim,
 	'intermediate_size': 4*dim,
 	'num_hidden_layers': n_hidden_layers,
 	'num_attention_heads': 4,
-	'vocab_size': 4096
+	'vocab_size': len(tokenizer)
 }
 
 # Initializing a LLaMA model
 configuration = LlamaConfig(**llama_config_kwargs)
 
 # Initializing a model from the llama-7b style configuration
-forward_model = LlamaModel(configuration)
-reverse_model = LlamaModel(configuration)
-model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model)
+# forward_model = LlamaModel(configuration)
+# reverse_model = LlamaModel(configuration)
+# model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model)
+
+model = LlamaForCausalLM(configuration)
+model = ReverseTransformer(model)
 
 train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
 test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
@@ -155,7 +158,7 @@ if torch.cuda.is_available():
 batch_size = global_batch_size // n_devices
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_bidirectional\
+output_dir = f'{checkpoint_root}/fineweb_reverse\
 _d{dim}\
 _n{n_hidden_layers}\
 _c{tokenized_length}_b{batch_size}x{n_devices}'
