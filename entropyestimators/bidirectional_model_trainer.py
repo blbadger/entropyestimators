@@ -125,6 +125,57 @@ class OutsideInTransformer(nn.Module):
 			loss = 0
 		return loss, output
 
+
+
+class OutsideInterleavedTransformer(nn.Module):
+
+	def __init__(self, causal_model):
+		super().__init__()
+		self.wte = nn.Embedding(n_vocab, dim)
+		self.lm_head = nn.Linear(dim, n_vocab, bias=False)
+		self.cel = nn.CrossEntropyLoss()
+		self.unreduced_cel = nn.CrossEntropyLoss(reduction='none')
+		self.tokenized_length = tokenized_length
+		self.causal_model = causal_model
+
+	def interleave(self, sequences):
+		# assumes sequences is shape [..., t]
+		half_length = sequences.shape[-1] // 2
+		first_half = sequences[..., :half_length]
+		second_half = sequences[..., half_length:]
+		second_half = torch.flip(second_half, dims=[1])
+		interleaved_sequences = torch.stack((first_half, second_half), dim=2).flatten(1)
+		return interleaved_sequences
+
+	def forward(self, input_ids, labels=None, attention_mask=None):
+
+		# Approach: interleave forward and reverse sequences, use on model
+		# Input becomes	[0, 1, 2, 3, 4, 5, 6, 7] -> [0, 7, 1, 6, 2, 5, 3, 4]
+		# and we predict one at a time, ie via a normal causal
+
+		half_length = input_ids.shape[-1] // 2
+		interleaved_inputs = self.interleave(input_ids)
+
+		if attention_mask is not None:
+			interleaved_attn_mask = self.interleave(attention_mask)
+		else:
+			interleaved_attn_mask=None
+		
+		logits = self.causal_model(input_ids=interleaved_inputs, attention_mask=interleaved_attn_mask).logits
+		logits = rearrange(logits, 'b e t -> b t e')
+		shift_logits = logits[..., 1:-1] # predictions for [1, 6, 2, 5, 3, 4]
+
+		if labels is not None:
+			if labels.dim() > 2:
+				labels = rearrange(labels, 'b p t -> b (p t)')
+			interleaved_labels = self.interleave(labels)
+			shift_labels = interleaved_labels[..., 2:] # labels [1, 6, 2, 5, 3, 4]
+			# shift logits and compute loss
+			loss = self.cel(shift_logits, shift_labels)
+		else:
+			loss = 0
+		return loss, logits
+
 load_dotenv()
 checkpoint_root = os.getenv('CHECKPOINT_ROOT')
 data_root = os.getenv('DATA_ROOT')
@@ -136,7 +187,7 @@ n_vocab = len(tokenizer)
 tokenized_length = 512
 dim = 512
 n_hidden_layers = 16 
-			
+
 llama_config_kwargs = {
 	'hidden_size': dim,
 	'intermediate_size': 4*dim,
@@ -154,9 +205,12 @@ configuration = LlamaConfig(**llama_config_kwargs)
 # model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model)
 
 # Initialize an outside-in model
-forward_model = LlamaModel(configuration)
-reverse_model = LlamaModel(configuration)
-model = OutsideInTransformer(n_vocab, dim, forward_model, reverse_model)
+# forward_model = LlamaModel(configuration)
+# reverse_model = LlamaModel(configuration)
+# model = OutsideInTransformer(n_vocab, dim, forward_model, reverse_model)
+
+causal_model = LlamaForCausalLM(configuration)
+model = OutsideInterleavedTransformer(causal_model)
 
 # Initialize a reverse model tainer
 # model = LlamaForCausalLM(configuration)
@@ -169,7 +223,7 @@ test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
 
-global_batch_size = 128
+global_batch_size = 16
 # get number of devices (assumes that all visible devices are used for training)
 if torch.cuda.is_available():
 	n_devices = torch.cuda.device_count()
