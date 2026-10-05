@@ -97,23 +97,29 @@ class OutsideInTransformer(nn.Module):
 		y_attn_mask = None
 		if attention_mask is not None:
 			y_attn_mask = torch.flip(attention_mask.clone(), dims=[1])
+
+		half_length = input_ids.shape[1] // 2
+		half_combined_embeddings = (x+y)[:, :half_length, :] # b t e
 		
 		# separate f/r modules not necessary as t_n+1 not in f_n or r_-n
-		forward = self.forward_model(inputs_embeds=x+y, attention_mask=attention_mask).last_hidden_state
-		reverse = self.reverse_model(inputs_embeds=x+y, attention_mask=y_attn_mask).last_hidden_state
+		forward = self.forward_model(inputs_embeds=half_combined_embeddings, attention_mask=attention_mask).last_hidden_state
+		reverse = self.reverse_model(inputs_embeds=half_combined_embeddings, attention_mask=y_attn_mask).last_hidden_state
 
 		forward_output = self.lm_head_f(forward)
 		reverse_output = self.lm_head_r(reverse)
-		output = torch.cat((forward_output, reverse_output), dim=1) # concat in token dim
+		
 		forward_logits = rearrange(forward_output, 'b t e -> b e t')
 		reverse_logits = rearrange(reverse_output, 'b t e -> b e t')
+		output = torch.cat((forward_logits, reverse_logits), dim=-1) # concat in token dim
+
 		if labels is not None:
 			if labels.dim() > 2:
 				labels = rearrange(labels, 'b p t -> b (p t)')
-			half_length = input_ids.shape[1] // 2
+			reverse_labels = torch.flip(labels.clone(), dims=[1]) # reverse in token dim
+
 			# shift logits and compute loss
-			loss_f = self.cel(forward_logits[..., :half_length-1] , labels[:, 1:half_length]) # first half of tokens are by head on forward modules
-			loss_r = self.cel(reverse_logits[..., half_length:-1], labels[:, half_length+1:]) # second half are predicted by head on reverse modules
+			loss_f = self.cel(forward_logits[..., :-1], labels[:, 1:half_length]) # first half of tokens are by head on forward modules
+			loss_r = self.cel(reverse_logits[..., :-1], reverse_labels[:, 1:half_length]) # second half are predicted by head on reverse modules
 			loss = torch.sum(loss_f + loss_r)/2
 		else:
 			loss = 0
@@ -129,7 +135,7 @@ n_vocab = len(tokenizer)
 
 tokenized_length = 512
 dim = 512
-n_hidden_layers = 8 # half of the CLM equivalent
+n_hidden_layers = 16 
 			
 llama_config_kwargs = {
 	'hidden_size': dim,
