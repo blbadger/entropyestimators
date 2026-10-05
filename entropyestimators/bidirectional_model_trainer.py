@@ -186,8 +186,7 @@ n_vocab = len(tokenizer)
 
 tokenized_length = 512
 dim = 512
-n_hidden_layers = 16 
-
+n_hidden_layers = 16
 llama_config_kwargs = {
 	'hidden_size': dim,
 	'intermediate_size': 4*dim,
@@ -213,8 +212,8 @@ causal_model = LlamaForCausalLM(configuration)
 model = OutsideInterleavedTransformer(causal_model)
 
 # Initialize a reverse model tainer
-# model = LlamaForCausalLM(configuration)
-# model = ReverseTransformer(model)
+model = LlamaForCausalLM(configuration)
+model = ReverseTransformer(model)
 
 train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
 test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
@@ -242,7 +241,7 @@ training_arguments = transformers.TrainingArguments(
 	num_train_epochs=3,
 	per_device_train_batch_size=batch_size,
 	per_device_eval_batch_size=batch_size,
-	warmup_steps=500,
+	warmup_steps=500, # 500
 	eval_steps=5000,
 	logging_steps=500,
 	learning_rate=2e-4,
