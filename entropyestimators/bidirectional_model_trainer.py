@@ -223,14 +223,14 @@ test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
 
-global_batch_size = 16
+global_batch_size = 128
 # get number of devices (assumes that all visible devices are used for training)
 if torch.cuda.is_available():
 	n_devices = torch.cuda.device_count()
 batch_size = global_batch_size // n_devices
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_outside_in\
+output_dir = f'{checkpoint_root}/fineweb_outside_interleaved\
 _d{dim}\
 _n{n_hidden_layers}\
 _c{tokenized_length}_b{batch_size}x{n_devices}'
