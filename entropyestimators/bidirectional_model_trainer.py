@@ -9,6 +9,7 @@ from datasets import load_dataset, load_from_disk
 from transformers import LlamaConfig, LlamaModel, LlamaForCausalLM
 from prettytable import PrettyTable
 from dotenv import load_dotenv
+from safetensors.torch import load_model
 
 
 class ReverseTransformer(nn.Module):
@@ -72,9 +73,68 @@ class BidirectionalTransformer(nn.Module):
 			labels = rearrange(labels, 'b p t -> b (p t)')
 		if self.last_loss_only:
 			loss = self.unreduced_cel(logits, labels)[:, -1] # last token loss from all batch elements
+			nonzero_indices = loss > 0.
+			loss = loss[nonzero_indices]
 		else:
 			loss = self.cel(logits, labels)
 		return loss, output
+
+
+class CausalLM(nn.Module):
+
+	def __init__(self, model, last_loss_only=False):
+		super().__init__()
+		self.model = model # a clm
+		self.cel = nn.CrossEntropyLoss()
+		self.unreduced_cel = nn.CrossEntropyLoss(reduction='none')
+		self.last_loss_only = last_loss_only
+
+	def forward(self, input_ids, labels=None, attention_mask=None):
+		output = self.model(input_ids=input_ids, attention_mask=attention_mask).logits
+		logits = rearrange(output, 'b t e -> b e t')
+		if labels.dim() > 2:
+			labels = rearrange(labels, 'b p t -> b (p t)')
+		shift_logits = logits[..., :-1]
+		shift_labels = labels[..., 1:]
+		if self.last_loss_only:
+			loss = self.unreduced_cel(shift_logits, shift_labels)[:, -1] # last token loss from all batch elements
+			nonzero_indices = loss > 0.
+			loss = loss[nonzero_indices]
+		else:
+			loss = self.cel(shift_logits, shift_labels)
+		return loss, logits
+
+class BidirectionalCLM(nn.Module):
+
+	def __init__(self, model):
+		super().__init__()
+		self.model = model # a clm
+		self.cel = nn.CrossEntropyLoss()
+		
+	def super_diagonal_mask(self, input, attention_mask=None, dtype=torch.float16, n_heads=4):
+		input_dtype = input.dtype
+		input_length = input.shape[1]
+		forward_mask = torch.tril(torch.ones((input_length, input_length), dtype=bool).to(input.device), diagonal=0).unsqueeze(1)
+		total_mask = forward_mask | torch.triu(torch.ones((input_length, input_length), dtype=bool).to(input.device), diagonal=2).unsqueeze(1)
+		combined_mask = (total_mask & attention_mask[:, None, None, :]).to(torch.bool)
+		combined_mask = torch.where(combined_mask, 0.0, torch.finfo(torch.float).min).to(dtype) # convert bool mask to additive float
+		combined_mask = combined_mask.squeeze(2).unsqueeze(1).repeat(1, n_heads, 1, 1) # expand for heads
+		return combined_mask
+
+	def forward(self, input_ids, labels=None, attention_mask=None):
+		bi_attention_mask = self.super_diagonal_mask(input_ids, attention_mask=attention_mask) # 4d attention mask
+		output = self.model(input_ids=input_ids, attention_mask=bi_attention_mask).logits
+		logits = rearrange(output, 'b t e -> b e t')
+		
+		shift_logits = logits[..., :-1]
+		if labels is not None:
+			if labels.dim() > 2:
+				labels = rearrange(labels, 'b p t -> b (p t)')
+			shift_labels = labels[..., 1:]
+			loss = self.cel(shift_logits, shift_labels)
+
+		return loss, logits
+
 
 class OutsideInTransformer(nn.Module):
 
@@ -151,7 +211,7 @@ class OutsideInterleavedTransformer(nn.Module):
 
 		# Approach: interleave forward and reverse sequences, use on model
 		# Input becomes	[0, 1, 2, 3, 4, 5, 6, 7] -> [0, 7, 1, 6, 2, 5, 3, 4]
-		# and we predict one at a time, ie via a normal causal
+		# and we predict one at a time, ie via a standard causal
 
 		half_length = input_ids.shape[-1] // 2
 		interleaved_inputs = self.interleave(input_ids)
@@ -192,7 +252,7 @@ llama_config_kwargs = {
 	'intermediate_size': 4*dim,
 	'num_hidden_layers': n_hidden_layers,
 	'num_attention_heads': 4,
-	'vocab_size': len(tokenizer)
+	'vocab_size':  len(tokenizer)
 }
 
 # Initializing a LLaMA model
@@ -203,17 +263,25 @@ configuration = LlamaConfig(**llama_config_kwargs)
 # reverse_model = LlamaModel(configuration)
 # model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model)
 
+# initialize a standard causal lm
+# causal_model = LlamaForCausalLM(configuration)
+# model = CausalLM(causal_model, last_loss_only=True)
+
+# bidirectional model via attn masking
+causal_model = LlamaForCausalLM(configuration)
+model = BidirectionalCLM(causal_model)
+
 # Initialize an outside-in model
 # forward_model = LlamaModel(configuration)
 # reverse_model = LlamaModel(configuration)
 # model = OutsideInTransformer(n_vocab, dim, forward_model, reverse_model)
 
-causal_model = LlamaForCausalLM(configuration)
-model = OutsideInterleavedTransformer(causal_model)
+# causal_model = LlamaForCausalLM(configuration)
+# model = OutsideInterleavedTransformer(causal_model)
 
 # Initialize a reverse model tainer
-model = LlamaForCausalLM(configuration)
-model = ReverseTransformer(model)
+# model = LlamaForCausalLM(configuration)
+# model = ReverseTransformer(model)
 
 train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
 test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
@@ -222,14 +290,14 @@ test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
 
-global_batch_size = 128
+global_batch_size = 16
 # get number of devices (assumes that all visible devices are used for training)
 if torch.cuda.is_available():
 	n_devices = torch.cuda.device_count()
 batch_size = global_batch_size // n_devices
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_outside_interleaved\
+output_dir = f'{checkpoint_root}/fineweb_bidirectional\
 _d{dim}\
 _n{n_hidden_layers}\
 _c{tokenized_length}_b{batch_size}x{n_devices}'
@@ -252,7 +320,7 @@ training_arguments = transformers.TrainingArguments(
 	max_steps=200000,
 	save_strategy='steps',
 	save_steps=10000,
-	torch_compile=True,
+	# torch_compile=True,
 	report_to='none'
 )
 
@@ -273,8 +341,8 @@ shutil.copy(code_path, output_dir)
 model.train()
 trainer.train()
 
-# # evaluate last token prediction accuracy
+# evaluate last token prediction accuracy
 # print ('evaluating last token loss only')
 # model.last_loss_only = True
 # model.eval()
-# trainer.evaluate()
+# print (trainer.evaluate())
