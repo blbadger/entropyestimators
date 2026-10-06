@@ -40,7 +40,7 @@ class ReverseTransformer(nn.Module):
 
 class BidirectionalTransformer(nn.Module):
 
-	def __init__(self, n_vocab, dim, forward_model, reverse_model, last_loss_only=False):
+	def __init__(self, n_vocab, dim, forward_model, reverse_model, last_loss_only=False, bidirectional_model=None):
 		super().__init__()
 		self.wte = nn.Embedding(n_vocab, dim)
 		self.lm_head = nn.Linear(dim, n_vocab, bias=False)
@@ -50,7 +50,17 @@ class BidirectionalTransformer(nn.Module):
 		self.tokenized_length = tokenized_length
 		self.forward_model = forward_model # LlamaModel
 		self.reverse_model = reverse_model # LlamaModel
-		
+		self.bidirectional_model = bidirectional_model # LlamaModel
+
+	def super_diagonal_mask(self, input, attention_mask=None, dtype=torch.float16, n_heads=4):
+		input_dtype = input.dtype
+		input_length = input.shape[1]
+		forward_mask = torch.tril(torch.ones((input_length, input_length), dtype=bool).to(input.device), diagonal=0).unsqueeze(1)
+		total_mask = forward_mask | torch.triu(torch.ones((input_length, input_length), dtype=bool).to(input.device), diagonal=2).unsqueeze(1)
+		combined_mask = (total_mask & attention_mask[:, None, None, :]).to(torch.bool)
+		combined_mask = torch.where(combined_mask, 0.0, torch.finfo(torch.float).min).to(dtype) # convert bool mask to additive float
+		combined_mask = combined_mask.squeeze(2).unsqueeze(1).repeat(1, n_heads, 1, 1) # expand for heads
+		return combined_mask
 
 	def forward(self, input_ids, labels=None, attention_mask=None):
 		x = input_ids
@@ -67,7 +77,13 @@ class BidirectionalTransformer(nn.Module):
 		reverse = torch.cat([torch.flip(reverse, dims=[1])[..., 1:, :], pad], dim=1) # right pad reverse
 		forward = torch.cat([pad, forward[..., :-1, :]], dim=1) # left pad forward
 
-		output = self.lm_head(forward + reverse) # linear combination of f and r modules
+		module_output = forward + reverse # linear combination of f and r modules
+
+		if self.bidirectional_model:
+			bi_attention_mask = self.super_diagonal_mask(input_ids, attention_mask=attention_mask) # 4d attention mask
+			output = self.bidirectional_model(inputs_embeds=module_output, attention_mask=bi_attention_mask).last_hidden_state
+
+		output = self.lm_head(module_output) 
 		logits = rearrange(output, 'b t e -> b e t')
 		if labels.dim() > 2:
 			labels = rearrange(labels, 'b p t -> b (p t)')
@@ -186,7 +202,6 @@ class OutsideInTransformer(nn.Module):
 		return loss, output
 
 
-
 class OutsideInterleavedTransformer(nn.Module):
 
 	def __init__(self, causal_model):
@@ -244,9 +259,9 @@ tokenizer = AutoTokenizer.from_pretrained("/home/bbadger/Desktop/tokenizer_finew
 tokenizer.pad_token = tokenizer.eos_token
 n_vocab = len(tokenizer)
 
-tokenized_length = 512
+tokenized_length = 512 
 dim = 512
-n_hidden_layers = 16
+n_hidden_layers = 8
 llama_config_kwargs = {
 	'hidden_size': dim,
 	'intermediate_size': 4*dim,
@@ -258,18 +273,31 @@ llama_config_kwargs = {
 # Initializing a LLaMA model
 configuration = LlamaConfig(**llama_config_kwargs)
 
+n_hidden_layers = 1 # only one layer in bidirectional model
+llama_config_kwargs = {
+	'hidden_size': dim,
+	'intermediate_size': 4*dim,
+	'num_hidden_layers': n_hidden_layers,
+	'num_attention_heads': 4,
+	'vocab_size':  len(tokenizer)
+}
+
+# Initializing a LLaMA model
+bi_configuration = LlamaConfig(**llama_config_kwargs)
+
 # Initializing a model from the llama-7b style configuration
-# forward_model = LlamaModel(configuration)
-# reverse_model = LlamaModel(configuration)
-# model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model)
+forward_model = LlamaModel(configuration)
+reverse_model = LlamaModel(configuration)
+bidirectional_model = LlamaModel(bi_configuration)
+model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model, bidirectional_model=bidirectional_model)
 
 # initialize a standard causal lm
 # causal_model = LlamaForCausalLM(configuration)
 # model = CausalLM(causal_model, last_loss_only=True)
 
 # bidirectional model via attn masking
-causal_model = LlamaForCausalLM(configuration)
-model = BidirectionalCLM(causal_model)
+# causal_model = LlamaForCausalLM(configuration)
+# model = BidirectionalCLM(causal_model)
 
 # Initialize an outside-in model
 # forward_model = LlamaModel(configuration)
@@ -290,14 +318,14 @@ test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
 
-global_batch_size = 16
+global_batch_size = 128
 # get number of devices (assumes that all visible devices are used for training)
 if torch.cuda.is_available():
 	n_devices = torch.cuda.device_count()
 batch_size = global_batch_size // n_devices
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_bidirectional\
+output_dir = f'{checkpoint_root}/fineweb_bidirectional_unifiedout\
 _d{dim}\
 _n{n_hidden_layers}\
 _c{tokenized_length}_b{batch_size}x{n_devices}'
@@ -320,7 +348,7 @@ training_arguments = transformers.TrainingArguments(
 	max_steps=200000,
 	save_strategy='steps',
 	save_steps=10000,
-	# torch_compile=True,
+	torch_compile=True,
 	report_to='none'
 )
 
