@@ -17,7 +17,7 @@ data_root = os.getenv('DATA_ROOT')
 
 tokenizer = AutoTokenizer.from_pretrained("/home/bbadger/Desktop/tokenizer_fineweb_8k")
 tokenizer.pad_token = tokenizer.eos_token
-tokenizer.mask_token_id = len(tokenizer) - 1
+tokenizer.mask_token_id = len(tokenizer) - 2
 n_vocab = len(tokenizer)
 
 tokenized_length = 512
@@ -29,12 +29,13 @@ bert_config_kwargs = {
 	'intermediate_size': 4*dim,
 	'num_hidden_layers': n_hidden_layers,
 	'num_attention_heads': 4,
-	'vocab_size': len(tokenizer)
+	'vocab_size': n_vocab,
+        'pad_token_id': tokenizer.pad_token_id
 }
 
 # Initializing a Bert model
-configuration = BertConfig(**bert_config_kwargs)
-model = BertForMaskedLM(configuration)
+#configuration = BertConfig(**bert_config_kwargs)
+#model = BertForMaskedLM(configuration)
 
 configuration = ModernBertConfig(**bert_config_kwargs)
 model = ModernBertForMaskedLM(configuration)
@@ -53,7 +54,7 @@ if torch.cuda.is_available():
 batch_size = global_batch_size // n_devices
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_bert_0.15mlm\
+output_dir = f'{checkpoint_root}/fineweb_modernbert_0.3mlm\
 _d{dim}\
 _n{n_hidden_layers}\
 _c{tokenized_length}_b{batch_size}x{n_devices}'
@@ -76,7 +77,7 @@ training_arguments = transformers.TrainingArguments(
 	max_steps=200000,
 	save_strategy='steps',
 	save_steps=10000,
-	torch_compile=False,
+	torch_compile=True,
 	report_to='none'
 )
 

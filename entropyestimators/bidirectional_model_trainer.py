@@ -50,7 +50,7 @@ class BidirectionalTransformer(nn.Module):
 		self.tokenized_length = tokenized_length
 		self.forward_model = forward_model # LlamaModel
 		self.reverse_model = reverse_model # LlamaModel
-		self.bidirectional_model = bidirectional_model # LlamaModel
+		self.bidirectional_model = bidirectional_model # LlamaModel or None
 
 	def super_diagonal_mask(self, input, attention_mask=None, dtype=torch.float16, n_heads=4):
 		input_dtype = input.dtype
@@ -288,7 +288,8 @@ bi_configuration = LlamaConfig(**llama_config_kwargs)
 # Initializing a model from the llama-7b style configuration
 forward_model = LlamaModel(configuration)
 reverse_model = LlamaModel(configuration)
-bidirectional_model = LlamaModel(bi_configuration)
+#bidirectional_model = LlamaModel(bi_configuration)
+bidirectional_model = None
 model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model, bidirectional_model=bidirectional_model)
 
 # initialize a standard causal lm
@@ -325,7 +326,7 @@ if torch.cuda.is_available():
 batch_size = global_batch_size // n_devices
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_bidirectional_unifiedout\
+output_dir = f'{checkpoint_root}/fineweb_bidirectional_nounifiedout\
 _d{dim}\
 _n{n_hidden_layers}\
 _c{tokenized_length}_b{batch_size}x{n_devices}'
@@ -367,7 +368,7 @@ if not os.path.isdir(output_dir):
 shutil.copy(code_path, output_dir)
 
 model.train()
-trainer.train()
+trainer.train(output_dir + '/checkpoint-190000')
 
 # evaluate last token prediction accuracy
 # print ('evaluating last token loss only')
