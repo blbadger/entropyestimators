@@ -314,25 +314,25 @@ llama_config_kwargs = {
 }
 
 # Initializing a LLaMA model
-configuration = LlamaConfig(**llama_config_kwargs)
+# configuration = LlamaConfig(**llama_config_kwargs)
 
-n_hidden_layers = 1 # only one layer in bidirectional model
-llama_config_kwargs = {
-	'hidden_size': dim,
-	'intermediate_size': 4*dim,
-	'num_hidden_layers': n_hidden_layers,
-	'num_attention_heads': 4,
-	'vocab_size':  len(tokenizer)
-}
+# n_hidden_layers = 1 # only one layer in bidirectional model
+# llama_config_kwargs = {
+# 	'hidden_size': dim,
+# 	'intermediate_size': 4*dim,
+# 	'num_hidden_layers': n_hidden_layers,
+# 	'num_attention_heads': 4,
+# 	'vocab_size':  len(tokenizer)
+# }
 
-# Initializing a LLaMA model
-bi_configuration = LlamaConfig(**llama_config_kwargs)
+# # Initializing a LLaMA model
+# bi_configuration = LlamaConfig(**llama_config_kwargs)
 
 # Initializing a model from the llama-7b style configuration
-forward_model = LlamaModel(configuration)
-reverse_model = LlamaModel(configuration)
-bidirectional_model = LlamaModel(bi_configuration)
-model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model, bidirectional_model=bidirectional_model)
+# forward_model = LlamaModel(configuration)
+# reverse_model = LlamaModel(configuration)
+# bidirectional_model = LlamaModel(bi_configuration)
+# model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model, bidirectional_model=bidirectional_model)
 
 # initialize a standard causal lm
 # causal_model = LlamaForCausalLM(configuration)
@@ -354,7 +354,7 @@ model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model, bid
 
 # Mask-based outside in model (forwared)
 causal_model = LlamaForCausalLM(configuration)
-model = OutsideInMaskModel(causal_model)
+model = OutsideInMaskModel(causal_model, reverse_loss=False)
 
 # Initialize a reverse model tainer
 # model = LlamaForCausalLM(configuration)
@@ -374,7 +374,7 @@ if torch.cuda.is_available():
 batch_size = global_batch_size // n_devices
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_bidirectional\
+output_dir = f'{checkpoint_root}/fineweb_outside_in_masked_floss\
 _d{dim}\
 _n{n_hidden_layers}\
 _c{tokenized_length}_b{batch_size}x{n_devices}'
