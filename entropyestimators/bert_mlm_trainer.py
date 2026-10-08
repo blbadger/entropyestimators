@@ -10,6 +10,7 @@ import shutil
 from dotenv import load_dotenv
 import os
 import pathlib
+from safetensors.torch import load_model
 
 load_dotenv()
 checkpoint_root = os.getenv('CHECKPOINT_ROOT')
@@ -24,20 +25,29 @@ tokenized_length = 512
 dim = 512
 n_hidden_layers = 16
 			
-bert_config_kwargs = {
+# bert_config_kwargs = {
+# 	'hidden_size': dim,
+# 	'intermediate_size': 4*dim,
+# 	'num_hidden_layers': n_hidden_layers,
+# 	'num_attention_heads': 4,
+# 	'vocab_size': n_vocab
+# }
+
+# # Initializing a Bert model
+# configuration = BertConfig(**bert_config_kwargs)
+# model = BertForMaskedLM(configuration)
+
+
+modernbert_config_kwargs = {
 	'hidden_size': dim,
 	'intermediate_size': 4*dim,
 	'num_hidden_layers': n_hidden_layers,
 	'num_attention_heads': 4,
 	'vocab_size': n_vocab,
-        'pad_token_id': tokenizer.pad_token_id
+    'pad_token_id': tokenizer.pad_token_id
 }
 
-# Initializing a Bert model
-#configuration = BertConfig(**bert_config_kwargs)
-#model = BertForMaskedLM(configuration)
-
-configuration = ModernBertConfig(**bert_config_kwargs)
+configuration = ModernBertConfig(**modernbert_config_kwargs)
 model = ModernBertForMaskedLM(configuration)
 
 train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
@@ -48,13 +58,13 @@ train_dataset = load_from_disk(train_path)
 test_dataset = load_from_disk(test_path)
 
 # get number of devices (assumes that all visible devices are used for training)
-global_batch_size=128
+global_batch_size=32
 if torch.cuda.is_available():
 	n_devices = torch.cuda.device_count()
 batch_size = global_batch_size // n_devices
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_modernbert_0.3mlm\
+output_dir = f'{checkpoint_root}/fineweb_bert_0.15mlm\
 _d{dim}\
 _n{n_hidden_layers}\
 _c{tokenized_length}_b{batch_size}x{n_devices}'
@@ -99,3 +109,4 @@ shutil.copy(code_path, output_dir)
 
 model.train()
 trainer.train()
+print (trainer.evaluate)

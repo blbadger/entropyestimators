@@ -50,7 +50,7 @@ class BidirectionalTransformer(nn.Module):
 		self.tokenized_length = tokenized_length
 		self.forward_model = forward_model # LlamaModel
 		self.reverse_model = reverse_model # LlamaModel
-		self.bidirectional_model = bidirectional_model # LlamaModel or None
+		self.bidirectional_model = bidirectional_model # LlamaModel
 
 	def super_diagonal_mask(self, input, attention_mask=None, dtype=torch.float16, n_heads=4):
 		input_dtype = input.dtype
@@ -151,6 +151,49 @@ class BidirectionalCLM(nn.Module):
 
 		return loss, logits
 
+class OutsideInMaskModel(nn.Module):
+
+	def __init__(self, model, reverse_loss=False):
+		super().__init__()
+		self.model = model # a clm
+		self.cel = nn.CrossEntropyLoss()
+		self.reverse_loss = reverse_loss
+		
+	def outside_in_mask(input, attention_mask=None, dtype=torch.float16, n_heads=4):
+		input_dtype = input.dtype
+		input_length = input.shape[1]
+		forward_mask = torch.tril(torch.ones((input_length, input_length), dtype=bool).to(input.device), diagonal=0).unsqueeze(1)
+		reverse_mask = torch.tril(torch.ones((input_length, input_length), dtype=bool).to(input.device), diagonal=0).unsqueeze(1)
+		reverse_mask = torch.rot90(reverse_mask, dims=(0, 2))
+		total_mask = forward_mask | reverse_mask
+		combined_mask = (total_mask & attention_mask[:, None, None, :]).to(torch.bool)
+		combined_mask = torch.where(combined_mask, 0.0, torch.finfo(torch.float).min).to(dtype) # convert bool mask to additive float
+		combined_mask = combined_mask.squeeze(2).unsqueeze(1).repeat(1, n_heads, 1, 1) # expand for heads
+		return combined_mask
+
+	def forward(self, input_ids, labels=None, attention_mask=None):
+		bi_attention_mask = self.outside_in_mask(input_ids, attention_mask=attention_mask) # 4d attention mask
+		output = self.model(input_ids=input_ids, attention_mask=bi_attention_mask).logits
+		logits = rearrange(output, 'b t e -> b e t')
+		half_length = input_ids.shape[-1] // 2
+		
+		right_shift_logits = logits[..., :-1]
+		left_shift_logits = logits[..., 1:]
+		if labels is not None:
+			if labels.dim() > 2:
+				labels = rearrange(labels, 'b p t -> b (p t)')
+			right_shift_labels = labels[..., 1:]
+			left_shift_labels = labels[..., :-1]
+			if self.reverse_loss:
+				forward_loss = self.cel(left_shift_logits[..., half_length+1:], left_shift_labels[..., half_length+1:])
+				reverse_loss = self.cel(right_shift_logits[..., :half_length-1], right_shift_labels[..., :half_length-1])
+				loss = torch.mean(forward_loss, reverse_loss)
+			else: 
+				# forward loss only
+				loss = self.cel(right_shift_logits[..., :half_length], right_shift_labels[..., :half_length])
+
+		return loss, logits
+
 
 class OutsideInTransformer(nn.Module):
 
@@ -200,7 +243,7 @@ class OutsideInTransformer(nn.Module):
 		else:
 			loss = 0
 		return loss, output
-
+		
 
 class OutsideInterleavedTransformer(nn.Module):
 
@@ -259,7 +302,7 @@ tokenizer = AutoTokenizer.from_pretrained("/home/bbadger/Desktop/tokenizer_finew
 tokenizer.pad_token = tokenizer.eos_token
 n_vocab = len(tokenizer)
 
-tokenized_length = 512 
+tokenized_length = 512
 dim = 512
 n_hidden_layers = 16
 llama_config_kwargs = {
@@ -273,24 +316,23 @@ llama_config_kwargs = {
 # Initializing a LLaMA model
 configuration = LlamaConfig(**llama_config_kwargs)
 
-#n_hidden_layers = 1 # only one layer in bidirectional model
-#llama_config_kwargs = {
-#	'hidden_size': dim,
-#	'intermediate_size': 4*dim,
-#	'num_hidden_layers': n_hidden_layers,
-#	'num_attention_heads': 4,
-#	'vocab_size':  len(tokenizer)
-#}
+n_hidden_layers = 1 # only one layer in bidirectional model
+llama_config_kwargs = {
+	'hidden_size': dim,
+	'intermediate_size': 4*dim,
+	'num_hidden_layers': n_hidden_layers,
+	'num_attention_heads': 4,
+	'vocab_size':  len(tokenizer)
+}
 
 # Initializing a LLaMA model
-#bi_configuration = LlamaConfig(**llama_config_kwargs)
+bi_configuration = LlamaConfig(**llama_config_kwargs)
 
 # Initializing a model from the llama-7b style configuration
-#forward_model = LlamaModel(configuration)
-#reverse_model = LlamaModel(configuration)
-#bidirectional_model = LlamaModel(bi_configuration)
-#bidirectional_model = None
-#model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model, bidirectional_model=bidirectional_model)
+forward_model = LlamaModel(configuration)
+reverse_model = LlamaModel(configuration)
+bidirectional_model = LlamaModel(bi_configuration)
+model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model, bidirectional_model=bidirectional_model)
 
 # initialize a standard causal lm
 # causal_model = LlamaForCausalLM(configuration)
@@ -300,17 +342,23 @@ configuration = LlamaConfig(**llama_config_kwargs)
 # causal_model = LlamaForCausalLM(configuration)
 # model = BidirectionalCLM(causal_model)
 
-# Initialize an outside-in model
+# Initialize an outside-in model: combined embeddings, F and R modules
 # forward_model = LlamaModel(configuration)
 # reverse_model = LlamaModel(configuration)
 # model = OutsideInTransformer(n_vocab, dim, forward_model, reverse_model)
 
+# Outside interleaved model init
 # causal_model = LlamaForCausalLM(configuration)
 # model = OutsideInterleavedTransformer(causal_model)
 
+
+# Mask-based outside in model (forwared)
+causal_model = LlamaForCausalLM(configuration)
+model = OutsideInMaskModel(causal_model)
+
 # Initialize a reverse model tainer
-model = LlamaForCausalLM(configuration)
-model = ReverseTransformer(model)
+# model = LlamaForCausalLM(configuration)
+# model = ReverseTransformer(model)
 
 train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
 test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
@@ -326,7 +374,7 @@ if torch.cuda.is_available():
 batch_size = global_batch_size // n_devices
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_reversed\
+output_dir = f'{checkpoint_root}/fineweb_bidirectional\
 _d{dim}\
 _n{n_hidden_layers}\
 _c{tokenized_length}_b{batch_size}x{n_devices}'
@@ -368,7 +416,7 @@ if not os.path.isdir(output_dir):
 shutil.copy(code_path, output_dir)
 
 model.train()
-trainer.train(output_dir + '/checkpoint-70000')
+trainer.train()
 
 # evaluate last token prediction accuracy
 # print ('evaluating last token loss only')
