@@ -261,7 +261,7 @@ n_vocab = len(tokenizer)
 
 tokenized_length = 512 
 dim = 512
-n_hidden_layers = 8
+n_hidden_layers = 16
 llama_config_kwargs = {
 	'hidden_size': dim,
 	'intermediate_size': 4*dim,
@@ -273,24 +273,24 @@ llama_config_kwargs = {
 # Initializing a LLaMA model
 configuration = LlamaConfig(**llama_config_kwargs)
 
-n_hidden_layers = 1 # only one layer in bidirectional model
-llama_config_kwargs = {
-	'hidden_size': dim,
-	'intermediate_size': 4*dim,
-	'num_hidden_layers': n_hidden_layers,
-	'num_attention_heads': 4,
-	'vocab_size':  len(tokenizer)
-}
+#n_hidden_layers = 1 # only one layer in bidirectional model
+#llama_config_kwargs = {
+#	'hidden_size': dim,
+#	'intermediate_size': 4*dim,
+#	'num_hidden_layers': n_hidden_layers,
+#	'num_attention_heads': 4,
+#	'vocab_size':  len(tokenizer)
+#}
 
 # Initializing a LLaMA model
-bi_configuration = LlamaConfig(**llama_config_kwargs)
+#bi_configuration = LlamaConfig(**llama_config_kwargs)
 
 # Initializing a model from the llama-7b style configuration
-forward_model = LlamaModel(configuration)
-reverse_model = LlamaModel(configuration)
+#forward_model = LlamaModel(configuration)
+#reverse_model = LlamaModel(configuration)
 #bidirectional_model = LlamaModel(bi_configuration)
-bidirectional_model = None
-model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model, bidirectional_model=bidirectional_model)
+#bidirectional_model = None
+#model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model, bidirectional_model=bidirectional_model)
 
 # initialize a standard causal lm
 # causal_model = LlamaForCausalLM(configuration)
@@ -309,8 +309,8 @@ model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model, bid
 # model = OutsideInterleavedTransformer(causal_model)
 
 # Initialize a reverse model tainer
-# model = LlamaForCausalLM(configuration)
-# model = ReverseTransformer(model)
+model = LlamaForCausalLM(configuration)
+model = ReverseTransformer(model)
 
 train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
 test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
@@ -326,7 +326,7 @@ if torch.cuda.is_available():
 batch_size = global_batch_size // n_devices
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_bidirectional_nounifiedout\
+output_dir = f'{checkpoint_root}/fineweb_reversed\
 _d{dim}\
 _n{n_hidden_layers}\
 _c{tokenized_length}_b{batch_size}x{n_devices}'
@@ -368,7 +368,7 @@ if not os.path.isdir(output_dir):
 shutil.copy(code_path, output_dir)
 
 model.train()
-trainer.train(output_dir + '/checkpoint-190000')
+trainer.train(output_dir + '/checkpoint-70000')
 
 # evaluate last token prediction accuracy
 # print ('evaluating last token loss only')
