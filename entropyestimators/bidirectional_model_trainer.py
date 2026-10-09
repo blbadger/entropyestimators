@@ -189,9 +189,10 @@ class OutsideInMaskModel(nn.Module):
 			right_shift_labels = labels[..., 1:]
 			left_shift_labels = labels[..., :-1]
 			if self.reverse_loss:
-				forward_loss = self.cel(left_shift_logits[..., half_length+1:], left_shift_labels[..., half_length+1:])
-				reverse_loss = self.cel(right_shift_logits[..., :half_length-1], right_shift_labels[..., :half_length-1])
-				loss = torch.mean(forward_loss, reverse_loss)
+				# forward and reverse loss
+				forward_loss = self.cel(right_shift_logits[..., :half_length], right_shift_labels[..., :half_length])
+				reverse_loss = self.cel(left_shift_logits[..., half_length:], left_shift_labels[..., half_length:])
+				loss = (forward_loss + reverse_loss) / 2
 			else: 
 				# forward loss only
 				loss = self.cel(right_shift_logits[..., :half_length], right_shift_labels[..., :half_length])
@@ -358,7 +359,7 @@ configuration = LlamaConfig(**llama_config_kwargs)
 
 # Mask-based outside in model (forwared)
 causal_model = LlamaForCausalLM(configuration)
-model = OutsideInMaskModel(causal_model, reverse_loss=False)
+model = OutsideInMaskModel(causal_model, reverse_loss=True)
 
 # Initialize a reverse model tainer
 # model = LlamaForCausalLM(configuration)
