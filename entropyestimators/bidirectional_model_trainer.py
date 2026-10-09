@@ -159,7 +159,7 @@ class OutsideInMaskModel(nn.Module):
 		self.cel = nn.CrossEntropyLoss()
 		self.reverse_loss = reverse_loss
 		
-	def outside_in_mask(input, attention_mask=None, dtype=torch.float16, n_heads=4):
+	def outside_in_mask(self, input, attention_mask=None, dtype=torch.float16, n_heads=4):
 		input_dtype = input.dtype
 		input_length = input.shape[1]
 		forward_mask = torch.tril(torch.ones((input_length, input_length), dtype=bool).to(input.device), diagonal=0).unsqueeze(1)
@@ -314,7 +314,7 @@ llama_config_kwargs = {
 }
 
 # Initializing a LLaMA model
-# configuration = LlamaConfig(**llama_config_kwargs)
+configuration = LlamaConfig(**llama_config_kwargs)
 
 # n_hidden_layers = 1 # only one layer in bidirectional model
 # llama_config_kwargs = {
