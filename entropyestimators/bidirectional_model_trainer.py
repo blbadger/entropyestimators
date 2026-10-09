@@ -153,11 +153,15 @@ class BidirectionalCLM(nn.Module):
 
 class OutsideInMaskModel(nn.Module):
 
-	def __init__(self, model, reverse_loss=False):
+	def __init__(self, model, loss_direction='both', double_heads=False, n_vocab=None, dim=None):
 		super().__init__()
 		self.model = model # a clm
 		self.cel = nn.CrossEntropyLoss()
-		self.reverse_loss = reverse_loss
+		self.loss_direction = loss_direction # 'forward', 'reverse', 'both'
+		self.double_heads = double_heads
+		if self.double_heads:
+			self.forward_head = nn.Linear(dim, n_vocab)
+			self.reverse_head = nn.Linear(dim, n_vocab)
 		
 	def outside_in_mask(self, input, attention_mask=None, dtype=torch.float16, n_heads=4):
 		input_dtype = input.dtype
@@ -176,10 +180,18 @@ class OutsideInMaskModel(nn.Module):
 		return combined_mask
 
 	def forward(self, input_ids, labels=None, attention_mask=None):
-		bi_attention_mask = self.outside_in_mask(input_ids, attention_mask=attention_mask) # 4d attention mask
-		output = self.model(input_ids=input_ids, attention_mask=bi_attention_mask).logits
-		logits = rearrange(output, 'b t e -> b e t')
 		half_length = input_ids.shape[-1] // 2
+		bi_attention_mask = self.outside_in_mask(input_ids, attention_mask=attention_mask) # 4d attention mask spec
+		if self.double_heads:
+			output = self.model(input_ids=input_ids, attention_mask=bi_attention_mask, output_hidden_states=True).hidden_states[-1]
+			forward_output = self.forward_head(output[:, :half_length, :])
+			reverse_output = self.reverse_head(output[:, half_length:, :])
+			output = torch.cat((forward_output, reverse_output), dim=1)
+		else:
+			output = self.model(input_ids=input_ids, attention_mask=bi_attention_mask).logits
+
+		logits = rearrange(output, 'b t e -> b e t')
+		
 		
 		right_shift_logits = logits[..., :-1]
 		left_shift_logits = logits[..., 1:]
@@ -188,14 +200,17 @@ class OutsideInMaskModel(nn.Module):
 				labels = rearrange(labels, 'b p t -> b (p t)')
 			right_shift_labels = labels[..., 1:]
 			left_shift_labels = labels[..., :-1]
-			if self.reverse_loss:
+			forward_loss = self.cel(right_shift_logits[..., :half_length], right_shift_labels[..., :half_length])
+			reverse_loss = self.cel(left_shift_logits[..., half_length:], left_shift_labels[..., half_length:])
+			if self.loss_direction == 'forward':
+				loss = forward_loss
+
+			elif self.loss_direction == 'reverse':
+				loss = reverse_loss
+
+			else:
 				# forward and reverse loss
-				forward_loss = self.cel(right_shift_logits[..., :half_length], right_shift_labels[..., :half_length])
-				reverse_loss = self.cel(left_shift_logits[..., half_length:], left_shift_labels[..., half_length:])
 				loss = (forward_loss + reverse_loss) / 2
-			else: 
-				# forward loss only
-				loss = self.cel(right_shift_logits[..., :half_length], right_shift_labels[..., :half_length])
 
 		return loss, logits
 
@@ -359,7 +374,7 @@ configuration = LlamaConfig(**llama_config_kwargs)
 
 # Mask-based outside in model (forwared)
 causal_model = LlamaForCausalLM(configuration)
-model = OutsideInMaskModel(causal_model, reverse_loss=True)
+model = OutsideInMaskModel(causal_model, loss_direction='reverse', double_heads=False, dim=dim, n_vocab=n_vocab)
 
 # Initialize a reverse model tainer
 # model = LlamaForCausalLM(configuration)
@@ -379,7 +394,7 @@ if torch.cuda.is_available():
 batch_size = global_batch_size // n_devices
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_outside_in_masked_floss\
+output_dir = f'{checkpoint_root}/fineweb_outside_in_masked_rloss\
 _d{dim}\
 _n{n_hidden_layers}\
 _c{tokenized_length}_b{batch_size}x{n_devices}'
