@@ -167,7 +167,7 @@ class OutsideInMaskModel(nn.Module):
 		reverse_mask = torch.tril(torch.ones((input_length, input_length), dtype=bool).to(input.device), diagonal=0).unsqueeze(1)
 		reverse_mask = torch.rot90(reverse_mask, dims=(0, 2))
 		total_mask = forward_mask | reverse_mask
-		suffix_mask = torch.cat((torch.ones((input_length, half_length-1), dtype=bool), torch.zeros((input_length, half_length+1), dtype=bool)), dim=-1).T.unsqueeze(1)
+		suffix_mask = torch.cat((torch.ones((input_length, half_length-2), dtype=bool), torch.zeros((input_length, half_length+2), dtype=bool)), dim=-1).T.unsqueeze(1).to(input.device)
 		total_mask = total_mask & suffix_mask
 		combined_mask = (total_mask & attention_mask[:, None, None, :]).to(torch.bool)
 		combined_mask = torch.where(combined_mask, 0.0, torch.finfo(torch.float).min).to(dtype) # convert bool mask to additive float
