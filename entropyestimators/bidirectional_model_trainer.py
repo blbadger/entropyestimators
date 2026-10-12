@@ -374,14 +374,14 @@ configuration = LlamaConfig(**llama_config_kwargs)
 
 # Mask-based outside in model (forwared)
 causal_model = LlamaForCausalLM(configuration)
-model = OutsideInMaskModel(causal_model, loss_direction='reverse', double_heads=False, dim=dim, n_vocab=n_vocab)
+model = OutsideInMaskModel(causal_model, loss_direction='both', double_heads=False, dim=dim, n_vocab=n_vocab)
 
 # Initialize a reverse model tainer
-# model = LlamaForCausalLM(configuration)
-# model = ReverseTransformer(model)
+#model = LlamaForCausalLM(configuration)
+#model = ReverseTransformer(model)
 
-train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
-test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
+train_path = f"{data_root}/finemath-4-tokenized-train-c512-8k"
+test_path =  f"{data_root}/finemath-4-tokenized-test-c512-8k"
 
 #map_dataset(train_path, test_path)
 train_dataset = load_from_disk(train_path)
@@ -394,7 +394,7 @@ if torch.cuda.is_available():
 batch_size = global_batch_size // n_devices
 
 # descriptive name for output
-output_dir = f'{checkpoint_root}/fineweb_outside_in_masked_rloss\
+output_dir = f'{checkpoint_root}/finemath_outsidein_masked_bothloss\
 _d{dim}\
 _n{n_hidden_layers}\
 _c{tokenized_length}_b{batch_size}x{n_devices}'
