@@ -46,17 +46,17 @@ reverse_model = ReverseTransformer(model).to(device)
 forward_model = LlamaForCausalLM(configuration).to(device)
 
 causal_model = LlamaForCausalLM(configuration)
-outside_in_model = OutsideInMaskModel(causal_model, loss_direction='both', double_heads=False, dim=dim, n_vocab=n_vocab).to(device).to(torch.float16)
+outside_in_model = OutsideInMaskModel(causal_model, loss_direction='both', double_heads=False).to(device).to(torch.float16)
 load_model(reverse_model, '/home/bbadger/Desktop/reverse_model.safetensors')
 load_model(forward_model, '/home/bbadger/Desktop/forward_model.safetensors')
 load_model(outside_in_model, '/home/bbadger/Desktop/outside_in_model.safetensors')
-
+print (outside_in_model)
 test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
-test_dataset = load_from_disk(test_path).filter(lambda x: x['input_ids'][-1] != tokenizer.pad_token_id).take(200) # we don't want pad tokens 
+test_dataset = load_from_disk(test_path).filter(lambda x: x['input_ids'][-1] != tokenizer.pad_token_id).take(3000) # we don't want pad tokens 
 cel = nn.CrossEntropyLoss(reduction='none')
 
 def outside_in_loss(logits, labels):
-	half_length = len(logits[0])//2
+	half_length = logits.shape[-1] // 2 # b e t
 	right_shift_logits = logits[..., :-1]
 	left_shift_logits = logits[..., 1:]
 	right_shift_labels = labels[..., 1:]
@@ -75,6 +75,7 @@ all_min_losses = []
 all_forward_losses = []
 all_reverse_losses = []
 outside_in_losses = []
+all_oin_losses = []
 for i in tqdm(range(batches)):
 	index = i * batch_size
 	samples = test_dataset[index:index+batch_size]
@@ -88,9 +89,10 @@ for i in tqdm(range(batches)):
 	with torch.no_grad():
 		forward_outs = forward_model(input_ids, attention_mask=attention_mask).logits
 		_, reverse_outs = reverse_model(input_ids, attention_mask=attention_mask) # returns logits
-		_, outside_in_outs = outside_in_model(input_ids, attention_mask=attention_mask)
+		_, outside_in_outs = outside_in_model(input_ids, labels=labels, attention_mask=attention_mask)
 
-	oin_loss = outside_in_loss(outside_in_outs, labels)
+	oin_losses = outside_in_loss(outside_in_outs, labels)
+
 	forward_outs = rearrange(forward_outs, 'b t e -> b e t')
 	forward_outs = forward_outs[..., :-1]
 
@@ -103,6 +105,7 @@ for i in tqdm(range(batches)):
 
 	all_forward_losses.append(forward_losses)
 	all_reverse_losses.append(torch.flip(reverse_losses.clone(), dims=[1]))
+	all_oin_losses.append(oin_losses.clone())
 
 	# compute average loss, ignoring pad
 	n_nonpad_tokens = torch.tensor([torch.sum(label != -100) for label in labels]).to(device)
@@ -112,7 +115,7 @@ for i in tqdm(range(batches)):
 	all_min_losses.append(torch.sum(min_losses, dim=-1) / n_nonpad_tokens)
 	losses_per_sample += list(zip(forward_losses, reverse_losses))
 
-	outside_in_losses.append(torch.sum(oin_loss, dim=-1) / n_nonpad_tokens)
+	outside_in_losses.append(torch.sum(oin_losses, dim=-1) / n_nonpad_tokens)
 
 min_losses_per_sample = [min(pair) for pair in losses_per_sample]
 average_forward_loss = sum(l[0] for l in losses_per_sample) / len(losses_per_sample)
@@ -129,6 +132,7 @@ print (f'Average forward loss: {average_forward_loss}\
 
 all_forward_losses = torch.cat(all_forward_losses, dim=0).cpu()
 all_reverse_losses = torch.cat(all_reverse_losses, dim=0).cpu()
+all_bidirectional_losses = torch.cat(all_oin_losses, dim=0).cpu()
 
 indices = torch.arange(511).cpu().numpy()
 forward_positionals = torch.mean(all_forward_losses, dim=0)
@@ -136,6 +140,15 @@ reverse_positionals = torch.mean(all_reverse_losses, dim=0)
 
 repeat_indices = np.tile(indices, batches*batch_size) # repeat indices samples number of times
 print (torch.min(all_forward_losses))
+
+df = pd.DataFrame()
+df['indices'] = repeat_indices
+df['loss'] = all_bidirectional_losses.flatten()
+directions = ['bidirectional']*len(all_forward_losses.flatten()) 
+df['direction'] = directions
+sns.lineplot(data=df, x='indices', y='loss', hue='direction')
+plt.show()
+plt.close()
 
 df = pd.DataFrame()
 df['indices'] = np.concatenate((repeat_indices, repeat_indices), axis=0)
