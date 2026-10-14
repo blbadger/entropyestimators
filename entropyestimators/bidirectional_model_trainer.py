@@ -116,7 +116,7 @@ class CausalLM(nn.Module):
 		shift_logits = logits[..., :-1]
 		shift_labels = labels[..., 1:]
 		if self.first_n_loss:
-			loss = self.unreduced_cel(shift_logits[..., :first_n_loss], shift_labels[..., :first_n_loss])
+			loss = self.cel(shift_logits[..., :self.first_n_loss], shift_labels[..., :self.first_n_loss])
 			nonzero_indices = loss > 0.
 			loss = loss[nonzero_indices]
 		else:
