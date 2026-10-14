@@ -101,12 +101,12 @@ class BidirectionalTransformer(nn.Module):
 
 class CausalLM(nn.Module):
 
-	def __init__(self, model, last_loss_only=False):
+	def __init__(self, model, first_n_loss=None):
 		super().__init__()
 		self.model = model # a clm
 		self.cel = nn.CrossEntropyLoss()
 		self.unreduced_cel = nn.CrossEntropyLoss(reduction='none')
-		self.last_loss_only = last_loss_only
+		self.first_n_loss = first_n_loss
 
 	def forward(self, input_ids, labels=None, attention_mask=None):
 		output = self.model(input_ids=input_ids, attention_mask=attention_mask).logits
@@ -115,8 +115,8 @@ class CausalLM(nn.Module):
 			labels = rearrange(labels, 'b p t -> b (p t)')
 		shift_logits = logits[..., :-1]
 		shift_labels = labels[..., 1:]
-		if self.last_loss_only:
-			loss = self.unreduced_cel(shift_logits, shift_labels)[:, -1] # last token loss from all batch elements
+		if self.first_n_loss:
+			loss = self.unreduced_cel(shift_logits[..., :first_n_loss], shift_labels[..., :first_n_loss])
 			nonzero_indices = loss > 0.
 			loss = loss[nonzero_indices]
 		else:
@@ -328,7 +328,7 @@ if __name__ == '__main__':
 	tokenizer.pad_token = tokenizer.eos_token
 	n_vocab = len(tokenizer)
 
-	tokenized_length = 256
+	tokenized_length = 512
 	dim = 512
 	n_hidden_layers = 16
 	llama_config_kwargs = {
@@ -362,7 +362,7 @@ if __name__ == '__main__':
 
 	# initialize a standard causal lm
 	causal_model = LlamaForCausalLM(configuration)
-	model = CausalLM(causal_model, last_loss_only=False)
+	model = CausalLM(causal_model, first_n_loss=256)
 
 	# bidirectional model via attn masking
 	# causal_model = LlamaForCausalLM(configuration)
@@ -390,22 +390,22 @@ if __name__ == '__main__':
 	test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
 
 	def half_context(input):
-		half_length = len(input['input_ids']) //2
+		half_length = len(input['input_ids']) // 2
 		input['input_ids'] = input['input_ids'][half_length:]
 		return input
 
 	#map_dataset(train_path, test_path)
-	train_dataset = load_from_disk(train_path).map(half_context, num_proc=12)
-	test_dataset = load_from_disk(test_path).map(half_context, num_proc=12)
+	train_dataset = load_from_disk(train_path)
+	test_dataset = load_from_disk(test_path)
 	print (train_dataset[0])
-	global_batch_size = 256
+	global_batch_size = 128
 	# get number of devices (assumes that all visible devices are used for training)
 	if torch.cuda.is_available():
 		n_devices = torch.cuda.device_count()
 	batch_size = global_batch_size // n_devices
 
 	# descriptive name for output
-	output_dir = f'{checkpoint_root}/fineweb_transformer\
+	output_dir = f'{checkpoint_root}/fineweb_transformer_first256loss\
 _d{dim}\
 _n{n_hidden_layers}\
 _c{tokenized_length}_b{batch_size}x{n_devices}'
