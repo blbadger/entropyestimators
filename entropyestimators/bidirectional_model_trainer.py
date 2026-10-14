@@ -325,7 +325,7 @@ if __name__ == '__main__':
 	tokenizer.pad_token = tokenizer.eos_token
 	n_vocab = len(tokenizer)
 
-	tokenized_length = 512
+	tokenized_length = 256
 	dim = 512
 	n_hidden_layers = 16
 	llama_config_kwargs = {
@@ -358,8 +358,8 @@ if __name__ == '__main__':
 	# model = BidirectionalTransformer(n_vocab, dim, forward_model, reverse_model, bidirectional_model=bidirectional_model)
 
 	# initialize a standard causal lm
-	# causal_model = LlamaForCausalLM(configuration)
-	# model = CausalLM(causal_model, last_loss_only=True)
+	causal_model = LlamaForCausalLM(configuration)
+	model = CausalLM(causal_model, last_loss_only=False)
 
 	# bidirectional model via attn masking
 	# causal_model = LlamaForCausalLM(configuration)
@@ -376,31 +376,36 @@ if __name__ == '__main__':
 
 
 	# Mask-based outside in model (forwared)
-	causal_model = LlamaForCausalLM(configuration)
-	model = OutsideInMaskModel(causal_model, loss_direction='both', double_heads=False, dim=dim, n_vocab=n_vocab)
+	#causal_model = LlamaForCausalLM(configuration)
+	#model = OutsideInMaskModel(causal_model, loss_direction='both', double_heads=False, dim=dim, n_vocab=n_vocab)
 
 	# Initialize a reverse model tainer
 	#model = LlamaForCausalLM(configuration)
 	#model = ReverseTransformer(model)
 
-	train_path = f"{data_root}/finemath-4-tokenized-train-c512-8k"
-	test_path =  f"{data_root}/finemath-4-tokenized-test-c512-8k"
+	train_path = f"{data_root}/fineweb-edu-tokenized-train-c512-8k"
+	test_path =  f"{data_root}/fineweb-edu-tokenized-test-c512-8k"
+
+	def half_context(input):
+		half_length = len(input['input_ids']) //2
+		input['input_ids'] = input['input_ids'][half_length:]
+		return input
 
 	#map_dataset(train_path, test_path)
-	train_dataset = load_from_disk(train_path)
-	test_dataset = load_from_disk(test_path)
-
-	global_batch_size = 128
+	train_dataset = load_from_disk(train_path).map(half_context, num_proc=12)
+	test_dataset = load_from_disk(test_path).map(half_context, num_proc=12)
+	print (train_dataset[0])
+	global_batch_size = 256
 	# get number of devices (assumes that all visible devices are used for training)
 	if torch.cuda.is_available():
 		n_devices = torch.cuda.device_count()
 	batch_size = global_batch_size // n_devices
 
 	# descriptive name for output
-	output_dir = f'{checkpoint_root}/finemath_outsidein_masked_bothloss\
-	_d{dim}\
-	_n{n_hidden_layers}\
-	_c{tokenized_length}_b{batch_size}x{n_devices}'
+	output_dir = f'{checkpoint_root}/fineweb_transformer\
+_d{dim}\
+_n{n_hidden_layers}\
+_c{tokenized_length}_b{batch_size}x{n_devices}'
 
 	print (f"training model, saving to {output_dir}")
 
