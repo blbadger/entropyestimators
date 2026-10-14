@@ -40,7 +40,7 @@ class ReverseTransformer(nn.Module):
 
 class BidirectionalTransformer(nn.Module):
 
-	def __init__(self, n_vocab, dim, forward_model, reverse_model, last_loss_only=False, bidirectional_model=None):
+	def __init__(self, n_vocab, dim, forward_model, reverse_model, last_loss_only=False, bidirectional_model=None, tokenized_length=512):
 		super().__init__()
 		self.wte = nn.Embedding(n_vocab, dim)
 		self.lm_head = nn.Linear(dim, n_vocab, bias=False)
@@ -85,14 +85,17 @@ class BidirectionalTransformer(nn.Module):
 
 		output = self.lm_head(module_output) 
 		logits = rearrange(output, 'b t e -> b e t')
-		if labels.dim() > 2:
-			labels = rearrange(labels, 'b p t -> b (p t)')
-		if self.last_loss_only:
-			loss = self.unreduced_cel(logits, labels)[:, -1] # last token loss from all batch elements
-			nonzero_indices = loss > 0.
-			loss = loss[nonzero_indices]
+		if labels is not None:
+			if labels.dim() > 2:
+				labels = rearrange(labels, 'b p t -> b (p t)')
+			if self.last_loss_only:
+				loss = self.unreduced_cel(logits, labels)[:, -1] # last token loss from all batch elements
+				nonzero_indices = loss > 0.
+				loss = loss[nonzero_indices]
+			else:
+				loss = self.cel(logits, labels)
 		else:
-			loss = self.cel(logits, labels)
+			loss = 0
 		return loss, output
 
 
